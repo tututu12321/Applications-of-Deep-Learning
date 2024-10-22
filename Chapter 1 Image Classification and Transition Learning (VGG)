@@ -1,0 +1,91 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torchvision
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+
+# デバイスの確認（GPUが利用可能であれば使用）
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# データ変換（VGGの入力サイズにリサイズし、標準化）
+transform = transforms.Compose([
+    transforms.Resize(224),  # VGGの入力サイズにリサイズ
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNetの正規化
+])
+
+# データセットの準備（CIFAR-10を使用）
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=True, num_workers=2)
+
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=2)
+
+# 事前学習済みのVGGモデルをロード（VGG16を使用）
+model = torchvision.models.vgg16(pretrained=True)
+
+# VGGの最終層を、CIFAR-10用に出力層（10クラス）に変更
+model.classifier[6] = nn.Linear(4096, 10)
+
+# モデルをGPUに移動
+model = model.to(device)
+
+# 損失関数と最適化関数
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# モデルのトレーニング関数
+def train_model(model, trainloader, criterion, optimizer, epochs=5):
+    model.train()
+    train_loss = []
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for i, (inputs, labels) in enumerate(trainloader, 0):
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            # 勾配を初期化
+            optimizer.zero_grad()
+
+            # 順伝播
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            # 逆伝播と最適化
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+        epoch_loss = running_loss / len(trainloader)
+        train_loss.append(epoch_loss)
+        print(f'Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss:.4f}')
+    
+    return train_loss
+
+# モデルのテスト関数
+def test_model(model, testloader):
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in testloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    print(f'Accuracy: {100 * correct / total:.2f}%')
+
+# モデルをトレーニング
+train_loss = train_model(model, trainloader, criterion, optimizer, epochs=5)
+
+# モデルのテスト
+test_model(model, testloader)
+
+# トレーニング中の損失をプロット
+plt.plot(train_loss)
+plt.title('Training Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.show()
